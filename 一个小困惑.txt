@@ -1,0 +1,24 @@
+在 Python 中，`import concurrent` 本身并不会自动导入其内部的 `futures` 子模块。这是因为 Python 的模块导入机制中，导入父包不会隐式导入其子模块。
+
+要通过 `concurrent.futures` 的方式使用，需要显式导入子模块，有两种常见方式：
+
+1. 先导入父包，再显式导入子模块：
+```python
+import concurrent
+import concurrent.futures  # 必须显式导入子模块
+
+# 之后就可以使用
+with concurrent.futures.ThreadPoolExecutor() as executor:
+    pass
+```
+
+2. 直接导入子模块（更推荐的方式）：
+```python
+import concurrent.futures
+
+# 直接使用
+with concurrent.futures.ThreadPoolExecutor() as executor:
+    pass
+```
+
+简单来说，`import concurrent` 只是加载了顶层的 `concurrent` 包，但不会自动加载其内部的 `futures` 子模块，所以需要额外导入子模块后才能使用 `concurrent.futures`。

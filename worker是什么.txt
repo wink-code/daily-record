@@ -1,0 +1,26 @@
+在《Fluent Python》中提到的“职程（workers）”，是指**并发编程中负责执行具体任务的独立执行单元**，可以理解为“工作单元”或“任务执行者”。它不是Python特有的概念，而是并发编程领域的通用术语，在不同场景下可能对应不同的具体实现。
+
+在Python语境中，“职程”通常根据并发模型的不同而有不同的表现形式：
+
+1. **多线程场景**：每个worker可能是一个`threading.Thread`实例，负责执行特定任务（如处理网络请求、I/O操作等）。
+
+2. **多进程场景**：每个worker可能是一个`multiprocessing.Process`实例，适合处理CPU密集型任务（规避GIL限制）。
+
+3. **线程池/进程池**：在`concurrent.futures`模块中，`ThreadPoolExecutor`或`ProcessPoolExecutor`管理的“工作线程”或“工作进程”也被称为workers。例如：
+   ```python
+   from concurrent.futures import ThreadPoolExecutor
+   
+   # 线程池中的每个线程都是一个worker
+   with ThreadPoolExecutor(max_workers=3) as executor:
+       executor.map(处理函数, 任务列表)  # 由3个worker并行处理任务
+   ```
+
+4. **异步编程**：在`asyncio`中，worker可能对应执行协程任务的“事件循环调度单元”，负责驱动协程的运行。
+
+
+核心特点：
+- workers是“任务的实际执行者”，通常由调度器（如线程池、事件循环）统一管理。
+- 多个workers可以并行（多进程）或并发（多线程/协程）处理任务，提高程序效率。
+- 书中用“职程”强调其“执行任务的角色”，而非具体是线程、进程还是协程，是对并发执行单元的抽象描述。
+
+简单说，无论用哪种并发方式，负责“干活”的那个“单元”（线程、进程、协程等）都可以称为worker（职程）。

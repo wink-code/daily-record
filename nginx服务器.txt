@@ -1,0 +1,272 @@
+# Nginx 服务器：全面解析与实践指南
+Nginx（发音为“engine-x”）是一款高性能、轻量级的 **HTTP 服务器、反向代理服务器** 和 **负载均衡器**，由俄罗斯开发者 Igor Sysoev 开发，自 2004 年发布以来，凭借“高并发、低内存占用、稳定可靠”的特性，成为互联网领域最主流的服务器软件之一（全球近 30% 的网站使用 Nginx，如淘宝、京东、Netflix、GitHub 等）。
+
+
+## 一、Nginx 核心定位与核心优势
+Nginx 的设计初衷是解决传统服务器（如 Apache）在“高并发场景”下的性能瓶颈，其核心价值围绕“**高效处理请求**”展开，具体优势如下：
+
+### 1. 高性能：高并发 + 低内存
+- **事件驱动模型**：采用 **epoll（Linux）/ kqueue（BSD）** 异步非阻塞事件模型，而非 Apache 的“多进程/多线程”模型——无需为每个请求创建独立进程/线程，仅通过少量工作进程即可处理 **数万甚至数十万并发连接**（单机并发能力是 Apache 的 5-10 倍）。
+- **内存占用极低**：稳定运行时，单个工作进程内存占用通常在 2-4MB，即使并发量达 10 万，总内存占用也远低于传统服务器。
+
+### 2. 功能全面：一站式服务能力
+Nginx 不仅是 HTTP 服务器，还集成了反向代理、负载均衡、动静分离、缓存、SSL 终端等核心功能，无需依赖第三方组件即可满足企业级需求：
+- 静态资源服务：高效处理 HTML、CSS、JS、图片、视频等静态文件（支持断点续传、gzip 压缩）；
+- 反向代理：隐藏后端业务服务器地址，实现“客户端 → Nginx → 后端服务”的请求转发；
+- 负载均衡：将并发请求分发到多台后端服务器，避免单点故障，提升服务可用性；
+- 动静分离：静态资源由 Nginx 直接返回，动态请求（如 PHP、Java 接口）转发给后端应用服务器，减轻后端压力。
+
+### 3. 高可靠与可扩展
+- **稳定性强**：工作进程与主进程分离，单个工作进程异常崩溃时，主进程会自动重启新进程，避免服务中断；
+- **可扩展**：支持通过“模块”扩展功能（如 `ngx_http_ssl_module` 实现 HTTPS，`ngx_http_gzip_module` 实现压缩），且支持自定义开发模块；
+- **跨平台**：可运行于 Linux、Windows、macOS 等系统，但生产环境以 Linux 为主（Windows 版本功能受限）。
+
+
+## 二、Nginx 核心应用场景
+Nginx 的功能特性决定了其广泛的应用场景，以下是最典型的 4 类场景：
+
+### 1. 静态资源服务器（最基础场景）
+Nginx 对静态文件的处理效率远超应用服务器（如 Tomcat、Node.js），因此常作为“静态资源专属服务器”，直接对外提供 HTML、CSS、图片、视频等文件的访问服务。  
+**核心配置示例**（处理 `/var/www/html` 目录下的静态文件）：
+```nginx
+server {
+    listen 80;                  # 监听 80 端口（HTTP 默认端口）
+    server_name static.example.com;  # 绑定域名
+
+    location / {
+        root /var/www/html;     # 静态资源根目录
+        index index.html;       # 默认首页
+        expires 7d;             # 静态资源缓存 7 天（减少重复请求）
+    }
+}
+```
+
+### 2. 反向代理（隐藏后端服务）
+“反向代理”是 Nginx 最核心的场景之一：客户端不直接访问后端业务服务器（如 Tomcat、Spring Boot 服务），而是先请求 Nginx，由 Nginx 转发请求到后端，并将后端响应返回给客户端。  
+**价值**：隐藏后端服务器 IP，提升安全性；统一入口，便于后续扩展负载均衡。  
+**核心配置示例**（转发请求到后端 Tomcat 服务）：
+```nginx
+server {
+    listen 80;
+    server_name api.example.com;  # 客户端访问的域名
+
+    # 所有请求转发到后端 Tomcat（地址：192.168.1.100:8080）
+    location / {
+        proxy_pass http://192.168.1.100:8080;  # 后端服务地址
+        proxy_set_header Host $host;           # 传递客户端 Host 头
+        proxy_set_header X-Real-IP $remote_addr;  # 传递客户端真实 IP
+    }
+}
+```
+
+### 3. 负载均衡（分发并发请求）
+当后端业务服务器集群化（多台相同服务）时，Nginx 可作为“负载均衡器”，将客户端请求按指定策略分发到不同后端服务器，避免单台服务器过载，提升服务并发能力和可用性。  
+Nginx 支持 4 种主流负载均衡策略：
+
+| 策略名称       | 原理                                                                 | 适用场景                                   |
+|----------------|----------------------------------------------------------------------|--------------------------------------------|
+| **轮询（默认）** | 按请求顺序依次分发到后端服务器（1→2→3→1→2→3...）                     | 后端服务器性能一致，无特殊需求             |
+| **权重（weight）** | 按权重比例分发（权重越高，接收请求越多，如 server A weight=5，B weight=1） | 后端服务器性能差异大（高性能服务器权重高） |
+| **IP 哈希（ip_hash）** | 按客户端 IP 哈希值固定分发到某台后端服务器                             | 需要“会话保持”（如用户登录状态绑定服务器） |
+| **URL 哈希（url_hash）** | 按请求 URL 哈希值固定分发（需第三方模块 `ngx_http_upstream_hash_module`） | 静态资源缓存（相同 URL 请求到同一服务器） |
+
+**核心配置示例**（权重 + IP 哈希混合策略）：
+```nginx
+# 定义后端服务器集群（命名为 backend_servers）
+upstream backend_servers {
+    ip_hash;  # 优先按 IP 哈希绑定服务器（会话保持）
+    server 192.168.1.100:8080 weight=5;  # 权重 5，接收 5/6 的请求
+    server 192.168.1.101:8080 weight=1;  # 权重 1，接收 1/6 的请求
+    server 192.168.1.102:8080 backup;    # 备用服务器（主服务器故障时启用）
+}
+
+# 客户端请求转发到集群
+server {
+    listen 80;
+    server_name app.example.com;
+
+    location / {
+        proxy_pass http://backend_servers;  # 转发到集群
+        proxy_set_header Host $host;
+    }
+}
+```
+
+### 4. HTTPS 终端（加密传输）
+Nginx 可作为“SSL 终端”，负责处理 HTTPS 协议的加密/解密（客户端 → Nginx 用 HTTPS，Nginx → 后端用 HTTP），减轻后端服务器的加密计算压力，同时统一管理 SSL 证书。  
+**核心配置示例**（启用 HTTPS，强制 HTTP 跳转 HTTPS）：
+```nginx
+# 1. HTTP 服务：强制跳转到 HTTPS
+server {
+    listen 80;
+    server_name ssl.example.com;
+    return 301 https://$host$request_uri;  # 301 永久重定向到 HTTPS
+}
+
+# 2. HTTPS 服务：处理加密请求
+server {
+    listen 443 ssl;  # 监听 443 端口（HTTPS 默认端口）
+    server_name ssl.example.com;
+
+    # SSL 证书配置（需替换为实际证书路径）
+    ssl_certificate /etc/nginx/ssl/ssl.example.com.crt;  # 公钥证书
+    ssl_certificate_key /etc/nginx/ssl/ssl.example.com.key;  # 私钥
+
+    # 优化 SSL 配置（禁用不安全加密套件，启用 TLS 1.2+）
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_ciphers ECDHE-RSA-AES256-GCM-SHA512:DHE-RSA-AES256-GCM-SHA512;
+
+    # 转发到后端 HTTP 服务
+    location / {
+        proxy_pass http://192.168.1.100:8080;
+    }
+}
+```
+
+
+## 三、Nginx 核心配置与架构
+### 1. 配置文件结构
+Nginx 的主配置文件默认路径为 `/etc/nginx/nginx.conf`（Linux），配置结构分为 4 个层级，自上而下作用范围递减：
+```nginx
+# 1. 全局块：配置影响 Nginx 全局的参数（如工作进程数）
+user nginx;                # 运行 Nginx 的用户
+worker_processes auto;     # 工作进程数（建议设为 CPU 核心数，auto 自动适配）
+error_log /var/log/nginx/error.log warn;  # 错误日志路径与级别
+pid /var/run/nginx.pid;    # Nginx 进程 PID 文件
+
+# 2. 事件块：配置网络连接相关参数（如并发连接数）
+events {
+    worker_connections 10240;  # 单个工作进程最大并发连接数
+    use epoll;                 # 启用 epoll 事件模型（Linux 推荐）
+}
+
+# 3. HTTP 块：配置 HTTP 协议相关参数（如全局缓存、压缩）
+http {
+    include /etc/nginx/mime.types;  # 引入 MIME 类型映射（如 .html 对应 text/html）
+    default_type application/octet-stream;  # 默认 MIME 类型
+
+    # 日志格式定义（main 为格式名，可在 server 块中引用）
+    log_format main '$remote_addr - $remote_user [$time_local] "$request" '
+                    '$status $body_bytes_sent "$http_referer" '
+                    '"$http_user_agent" "$http_x_forwarded_for"';
+
+    access_log /var/log/nginx/access.log main;  # 访问日志路径与格式
+
+    sendfile on;  # 启用高效文件传输模式（减少磁盘 I/O 开销）
+    tcp_nopush on;  # 配合 sendfile 使用，提升网络传输效率
+    tcp_nodelay on;
+
+    keepalive_timeout 65;  # 客户端连接超时时间（秒）
+    gzip on;  # 启用 gzip 压缩（减少传输数据量）
+
+    # 4. Server 块：配置虚拟主机（一个 Server 对应一个域名/服务）
+    server {
+        listen 80;
+        server_name example.com;  # 绑定域名
+
+        # Location 块：匹配 Server 内的具体 URL 路径（优先级：精确匹配 > 前缀匹配）
+        location / {
+            root /var/www/example;
+            index index.html;
+        }
+
+        # 匹配 /api 开头的请求，转发到后端
+        location /api {
+            proxy_pass http://192.168.1.100:8080;
+        }
+    }
+
+    # 可配置多个 Server 块（对应不同域名）
+    server {
+        listen 80;
+        server_name test.example.com;
+        # ... 其他配置
+    }
+}
+```
+
+### 2. 架构原理
+Nginx 采用“**主进程 + 工作进程**”的多进程架构，无线程开销，稳定性和性能更优：
+- **主进程（Master Process）**：负责管理工作进程，如启动/重启/停止工作进程、读取配置文件、处理信号（如 `nginx -s reload`）；
+- **工作进程（Worker Process）**：负责实际处理客户端请求（如接收连接、解析请求、转发/返回响应），数量通常设为 CPU 核心数（避免进程切换开销）；
+- **连接处理**：每个工作进程通过 epoll 事件模型监听端口，高效处理数千并发连接，无需为每个连接创建线程。
+
+
+## 四、Nginx 安装与常用命令（Linux 为例）
+### 1. 安装方式（以 CentOS 为例）
+#### 方式 1：通过 YUM 仓库（简单，适合新手）
+```bash
+# 1. 安装 EPEL 仓库（Nginx 不在 CentOS 官方仓库）
+yum install -y epel-release
+
+# 2. 安装 Nginx
+yum install -y nginx
+
+# 3. 启动 Nginx 并设置开机自启
+systemctl start nginx
+systemctl enable nginx
+```
+
+#### 方式 2：源码编译安装（灵活，可自定义模块）
+```bash
+# 1. 安装依赖包
+yum install -y gcc gcc-c++ pcre-devel zlib-devel openssl-devel
+
+# 2. 下载 Nginx 源码包（官网：https://nginx.org/）
+wget https://nginx.org/download/nginx-1.24.0.tar.gz
+
+# 3. 解压并编译安装（--with-ssl 启用 HTTPS 模块）
+tar -zxvf nginx-1.24.0.tar.gz
+cd nginx-1.24.0
+./configure --prefix=/usr/local/nginx --with-ssl
+make && make install
+
+# 4. 启动 Nginx
+/usr/local/nginx/sbin/nginx
+```
+
+### 2. 常用命令
+```bash
+# 1. 启动 Nginx（源码安装路径需替换为 /usr/local/nginx/sbin/nginx）
+nginx
+
+# 2. 停止 Nginx（强制停止：nginx -s stop；优雅停止：nginx -s quit）
+nginx -s quit
+
+# 3. 重新加载配置文件（修改配置后无需重启，平滑生效）
+nginx -s reload
+
+# 4. 检查配置文件语法是否正确
+nginx -t
+
+# 5. 查看 Nginx 版本
+nginx -v  # 简单版本（如 1.24.0）
+nginx -V  # 详细版本（含编译参数）
+```
+
+
+## 五、Nginx 常见问题与优化
+### 1. 常见问题排查
+- **问题 1：80/443 端口被占用**  
+  排查：`netstat -tulpn | grep 80`（查看占用端口的进程），停止占用进程（如 Apache）后重启 Nginx。
+  
+- **问题 2：配置文件语法错误**  
+  排查：执行 `nginx -t`，根据报错信息（如“unknown directive”）修改配置文件，再 `nginx -s reload`。
+  
+- **问题 3：静态资源 404**  
+  排查：检查 `root` 目录路径是否正确（绝对路径），确保 Nginx 用户（如 `nginx`）对资源目录有读取权限（`chmod -R 755 /var/www/html`）。
+
+### 2. 性能优化方向
+- **调整工作进程与连接数**：`worker_processes auto`（匹配 CPU 核心），`worker_connections 10240`（单个进程最大连接数，根据内存调整）；
+- **启用 gzip 压缩**：在 `http` 块添加 `gzip on; gzip_types text/html text/css application/json;`（只压缩文本类资源，避免压缩图片/视频）；
+- **启用缓存**：对静态资源设置 `expires 7d;`（浏览器缓存 7 天），减少重复请求；
+- **优化网络参数**：在 `http` 块添加 `tcp_nopush on; tcp_nodelay on;`（提升 TCP 传输效率）；
+- **限制并发与带宽**：通过 `limit_conn_module` 限制单 IP 并发连接数（`limit_conn per_ip 10;`），避免恶意请求。
+
+
+## 六、总结
+Nginx 是一款“全能型”服务器软件，从静态资源服务到反向代理、负载均衡，再到 HTTPS 加密，几乎覆盖了 Web 服务的所有核心需求。其核心优势在于“高性能、低资源占用、高可靠”，尤其适合高并发场景。
+
+- **新手入门**：优先通过 YUM 安装，熟悉 `server` 和 `location` 块的基础配置，实现静态资源服务或反向代理；
+- **生产环境**：建议源码编译安装（自定义模块），结合负载均衡、HTTPS、缓存优化，确保服务高可用；
+- **扩展学习**：深入理解 epoll 事件模型、Nginx 模块开发（如自定义负载均衡策略），或结合 OpenResty（基于 Nginx 的 Lua 开发平台）实现更复杂的业务逻辑（如 API 网关、限流熔断）。
