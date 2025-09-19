@@ -1,0 +1,50 @@
+在Python的`asyncio`模块中，`asyncio.run()`和`asyncio.create_task()`都用于处理协程，但它们的用途和行为有明显区别：
+
+1. **`asyncio.run()`**：
+   - 是启动异步程序的**顶层入口点**，用于运行一个协程并管理整个异步事件循环的生命周期
+   - 会自动创建事件循环、运行协程直到完成，然后关闭事件循环
+   - 一个Python程序通常只调用一次`asyncio.run()`
+   - 示例：
+     ```python
+     import asyncio
+
+     async def main():
+         print("Hello")
+         await asyncio.sleep(1)
+         print("World")
+
+     asyncio.run(main())  # 启动事件循环并运行main协程
+     ```
+
+2. **`asyncio.create_task()`**：
+   - 用于在**已运行的事件循环**中创建任务，将协程包装成任务并调度执行
+   - 不会阻塞当前代码，而是立即返回一个`Task`对象
+   - 必须在已存在的事件循环中使用（通常在由`asyncio.run()`启动的协程内部）
+   - 示例：
+     ```python
+     import asyncio
+
+     async def task_func():
+         await asyncio.sleep(1)
+         return "Task completed"
+
+     async def main():
+         # 创建任务并立即调度
+         task = asyncio.create_task(task_func())
+         
+         # 可以做其他事情
+         print("Doing other work...")
+         
+         # 等待任务完成并获取结果
+         result = await task
+         print(result)
+
+     asyncio.run(main())
+     ```
+
+**核心区别**：
+- `asyncio.run()`是启动整个异步程序的"开关"，负责事件循环的完整生命周期
+- `asyncio.create_task()`是在已运行的事件循环中**并发调度**多个协程的工具
+- `asyncio.run()`只能在程序顶层调用一次，而`create_task()`可以在协程内部多次调用以创建并发任务
+
+简单来说，`run()`用于启动整个异步程序，`create_task()`用于在程序运行过程中创建并发任务。
