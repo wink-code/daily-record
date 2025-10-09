@@ -1,0 +1,82 @@
+在 Python 中激活原生协程（即用 `async def` 定义的协程函数）时，**直接 `await spin()` 和使用 `asyncio.create_task(spin())` 是两种不同的方式**，适用场景不同，需根据需求选择：
+
+
+### 1. 直接 `await spin()`：同步等待协程完成
+如果执行 `await spin()`，当前协程会**暂停并等待 `spin()` 执行完毕**，然后再继续执行后续代码。  
+这相当于“同步调用”，`spin()` 会阻塞当前协程的执行流程。
+
+示例：
+```python
+import asyncio
+
+async def spin():
+    print("开始执行 spin")
+    await asyncio.sleep(2)  # 模拟耗时操作
+    print("spin 执行完毕")
+
+async def main():
+    print("main 开始")
+    await spin()  # 等待 spin 完成后才会执行下一步
+    print("main 继续执行")
+
+asyncio.run(main())
+```
+
+输出：
+```
+main 开始
+开始执行 spin
+spin 执行完毕
+main 继续执行
+```
+
+
+### 2. `asyncio.create_task(spin())`：异步并发执行
+如果使用 `asyncio.create_task(spin())`，会将 `spin()` 封装成一个**任务（Task）** 并提交到事件循环，`spin()` 会在后台异步执行，**当前协程不会被阻塞**，可以继续执行其他操作。
+
+若需要等待任务完成，可后续 `await` 该任务：
+
+示例：
+```python
+import asyncio
+
+async def spin():
+    print("开始执行 spin")
+    await asyncio.sleep(2)
+    print("spin 执行完毕")
+    return "spin 的返回值"
+
+async def main():
+    print("main 开始")
+    # 创建任务，spin() 会后台执行
+    task = asyncio.create_task(spin())
+    print("main 继续执行其他操作")
+    # 若需要获取结果，可在合适时机 await 任务
+    result = await task
+    print(f"获取到 spin 结果：{result}")
+
+asyncio.run(main())
+```
+
+输出：
+```
+main 开始
+main 继续执行其他操作
+开始执行 spin
+spin 执行完毕
+获取到 spin 结果：spin 的返回值
+```
+
+
+### 关键区别与选择建议
+| 方式 | 特点 | 适用场景 |
+|------|------|----------|
+| `await spin()` | 阻塞当前协程，等待 `spin()` 完成 | 需要严格按顺序执行（`spin()` 完成后才能继续） |
+| `asyncio.create_task(spin())` | 不阻塞当前协程，`spin()` 后台并发执行 | 需要并发执行多个任务（如同时处理多个 IO 操作） |
+
+
+### 总结
+- 如果你的需求是“激活 `spin()` 并等待它执行完再做其他事”，直接 `await spin()` 即可。
+- 如果需要“激活 `spin()` 后继续做其他操作，让它们并发执行”，则需要用 `asyncio.create_task(spin())`（若后续需要结果，再 `await` 任务）。
+
+两者都可以“激活”原生协程，核心区别在于是否阻塞当前协程的执行流程。
