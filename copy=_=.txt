@@ -1,0 +1,6 @@
+```
+for bullet in bullets.copy():
+    if condition:
+         remove(bullet)
+```
+当要操作`for`循环的被便利的Iterable时，使用`.copy`可以在不改变循环遍历的情况下删除原变量的相应元素。

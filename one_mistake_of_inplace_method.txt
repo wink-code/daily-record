@@ -1,0 +1,31 @@
+这段代码存在几个明显的问题：
+
+1. **`list.remove()` 方法的返回值问题**  
+   `list.remove(0)` 会修改原列表（删除第一个值为0的元素），但该方法的**返回值是 `None`**。因此 `x.tolist().remove(0)` 的结果是 `None`，再用 `np.array()` 转换会得到一个空数组，导致后续 `np.log(x_)` 报错。
+
+   正确的做法应该是先创建列表副本再删除元素：
+   ```python
+   x_list = x.tolist()
+   x_list.remove(0)  # 修改列表，无返回值
+   x_ = np.array(x_list)  # 基于修改后的列表创建数组
+   ```
+
+2. **异常捕获错误**  
+   代码尝试捕获 `ZeroDivisionError`，但 `np.log(x_)` 遇到非正数时会抛出 `ValueError`（如负数）或产生 `nan`/`inf`（如0），**不会抛出 `ZeroDivisionError`**（该异常仅用于除法运算）。
+
+   应捕获更相关的异常：
+   ```python
+   try:
+       y4 = np.log(x_)
+   except ValueError as e:
+       print(f"对数计算错误: {e}")
+   ```
+
+3. **删除元素的不确定性**  
+   `list.remove(0)` 只会删除**第一个值为0的元素**，如果原数组中有多个0，剩余的0仍会导致 `np.log(0)` 产生 `inf`，需要考虑是否要删除所有0元素：
+   ```python
+   x_ = x[x != 0]  # 用NumPy索引直接删除所有0元素（更高效）
+   ```
+
+
+总结来说，核心问题是对 `list.remove()` 返回值的误解，以及错误的异常处理类型。使用NumPy的布尔索引删除元素会更简洁高效。
