@@ -78,3 +78,21 @@ toggleglobalsitepackages  # 切换系统包访问状态（开启/关闭）
 - 优先选择 **软链接共享** 方式，兼顾隔离性和共享需求  
 - 尽量减少共享包的数量（仅共享体积大、版本稳定的包，如 `numpy`、`pandas` 等）  
 - 普通依赖仍建议在虚拟环境中单独安装，避免版本冲突
+
+
+------------------------------------------------------
+创建虚拟环境时遇到的一个问题：
+按程序创建虚拟环境，但是环境下的pip不知道为什么无法运行，where pip 返回的是主环境下的pip地址。
+但是虚拟环境下存在pip.
+"D:\coding\python\pyprojects\learning_log\ll_env\Lib\site-packages\pip"
+"D:\coding\python\pyprojects\learning_log\ll_env\Lib\site-packages\pip-25.1.1.dist-info"
+解决办法：
+1.删除以上两个pip相关的文件。
+2.curl https://bootstrap.pypa.io/get-pip.py -o get-pip.py
+3.在虚拟环境激活的情况下，python get-pip.py
+
+
+windows下的生成软路径文件
+for /f "delims=" %i in ('python -c "import site; print(site.getsitepackages()[1])"') do (
+    echo %PYTHON_SHARED_PACKAGES% >> "%i\share.pth"
+)
