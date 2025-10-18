@@ -1,0 +1,502 @@
+为 uWSGI 创建 **systemd 服务文件**，可实现开机自启、异常自动重启（进程崩溃/退出时触发）、状态管理（启动/停止/重启）等核心功能，完全适配生产环境需求。以下是详细步骤和配置说明：
+
+
+### 一、核心原理
+systemd 是 Linux 系统的初始化系统（如 Ubuntu 16.04+/CentOS 7+ 默认），通过“服务单元文件（`.service`）”管理进程。我们只需定义一个服务文件，指定 uWSGI 的启动命令、运行用户、重启策略等，即可让 systemd 接管 uWSGI 的生命周期。
+
+
+### 二、创建 systemd 服务文件
+#### 1. 确定关键路径（需提前准备）
+创建服务文件前，需明确 3 个核心路径（需根据你的项目实际情况替换）：
+| 路径类型               | 示例（需替换为你的实际路径）                          | 说明                                  |
+|------------------------|-------------------------------------------------------|---------------------------------------|
+| Django 项目根目录       | `/home/ubuntu/my_django_project`                       | 包含 `manage.py`、`uwsgi.ini` 的目录  |
+| uWSGI 配置文件路径     | `/home/ubuntu/my_django_project/uwsgi.ini`             | 之前创建的 uWSGI 配置文件（`uwsgi.ini`） |
+| Python 虚拟环境的 uWSGI 路径 | `/home/ubuntu/my_django_env/bin/uwsgi`              | 若使用虚拟环境，需指定虚拟环境内的 `uwsgi` 可执行文件；若全局安装，可直接用 `uwsgi`（通过 `which uwsgi` 查看路径） |
+
+
+#### 2. 创建服务文件
+systemd 服务文件默认存放在 `/etc/systemd/system/` 目录下，文件名建议为 `uwsgi-项目名.service`（便于区分多项目），例如 `uwsgi-myproject.service`。
+
+执行以下命令创建并编辑服务文件（需用 `sudo` 权限）：
+```bash
+sudo nano /etc/systemd/system/uwsgi-myproject.service
+```
+
+将以下内容粘贴到文件中，**并替换所有示例路径为你的实际路径**：
+```ini
+[Unit]
+# 服务描述（自定义，便于识别）
+Description=uWSGI Service for My Django Project
+# 依赖关系：在网络和文件系统就绪后启动（避免启动过早导致失败）
+After=network.target syslog.target
+
+[Service]
+# 运行用户（建议用非root用户，如 ubuntu、www-data，避免权限过高风险）
+User=ubuntu
+# 运行组（与用户一致，或用 www-data）
+Group=ubuntu
+# 工作目录（Django项目根目录，确保uWSGI能找到配置文件）
+WorkingDirectory=/home/ubuntu/my_django_project
+# 环境变量（可选，若项目依赖环境变量，如数据库密码、密钥等）
+# Environment="DJANGO_SETTINGS_MODULE=myproject.settings.prod"  # 示例：指定生产环境配置
+# Environment="SECRET_KEY=your_prod_secret_key"                # 示例：传递密钥（不推荐明文，建议用环境变量文件）
+
+# 启动命令（核心：指定uWSGI路径和配置文件）
+# 若用全局uWSGI，可简化为 ExecStart=/usr/bin/uwsgi --ini uwsgi.ini
+ExecStart=/home/ubuntu/my_django_env/bin/uwsgi --ini uwsgi.ini
+
+# 重启策略：异常退出时自动重启（核心需求）
+# always：无论退出码如何，均重启；on-failure：非0退出码时重启（推荐）
+Restart=on-failure
+# 重启延迟：异常退出后，延迟2秒再重启（避免频繁重启）
+RestartSec=2
+
+# 进程权限：禁止进程获得root权限（安全加固）
+NoNewPrivileges=true
+# 日志：将uWSGI的stdout/stderr重定向到systemd日志（便于排查问题）
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+# 开机自启的目标：多用户模式下生效（默认的正常系统运行模式）
+WantedBy=multi-user.target
+```
+
+
+#### 3. 保存并退出
+- 按 `Ctrl+O` 保存文件，按 `Enter` 确认文件名；
+- 按 `Ctrl+X` 退出 `nano` 编辑器。
+
+
+### 三、配置 systemd 服务（关键步骤）
+服务文件创建后，需通过 systemd 命令加载配置、启动服务，并设置开机自启。
+
+
+#### 1. 重新加载 systemd 配置
+由于新增了服务文件，需让 systemd 识别该文件：
+```bash
+sudo systemctl daemon-reload
+```
+
+
+#### 2. 启动 uWSGI 服务
+```bash
+sudo systemctl start uwsgi-myproject.service
+```
+
+- 若启动成功，无任何输出；
+- 若启动失败，执行 `sudo journalctl -u uwsgi-myproject -xe` 查看错误日志（核心排障命令）。
+
+
+#### 3. 设置开机自启
+确保服务器重启后，uWSGI 能自动启动：
+```bash
+sudo systemctl enable uwsgi-myproject.service
+```
+
+执行后会提示类似以下内容，说明开机自启已配置成功：
+```
+Created symlink /etc/systemd/system/multi-user.target.wants/uwsgi-myproject.service → /etc/systemd/system/uwsgi-myproject.service.
+```
+
+
+#### 4. 验证服务状态
+查看 uWSGI 服务是否正常运行、是否已设置开机自启：
+```bash
+sudo systemctl status uwsgi-myproject.service
+```
+
+**正常运行的输出示例**（关键信息已标注）：
+```
+● uwsgi-myproject.service - uWSGI Service for My Django Project
+     Loaded: loaded (/etc/systemd/system/uwsgi-myproject.service; enabled; vendor preset: enabled)  # enabled 表示开机自启已开启
+     Active: active (running) since Wed 2024-05-20 14:30:00 CST; 5min ago  # active (running) 表示服务正在运行
+       Docs: man:uwsgi(1)
+   Main PID: 1234 (uwsgi)  # 主进程ID
+      Tasks: 5 (limit: 4608)
+     Memory: 120.0M
+     CGroup: /system.slice/uwsgi-myproject.service
+             ├─1234 /home/ubuntu/my_django_env/bin/uwsgi --ini uwsgi.ini  # 主进程
+             ├─1235 /home/ubuntu/my_django_env/bin/uwsgi --ini uwsgi.ini  # 工作进程1
+             ├─1236 /home/ubuntu/my_django_env/bin/uwsgi --ini uwsgi.ini  # 工作进程2
+             ├─1237 /home/ubuntu/my_django_env/bin/uwsgi --ini uwsgi.ini  # 工作进程3
+             └─1238 /home/ubuntu/my_django_env/bin/uwsgi --ini uwsgi.ini  # 工作进程4
+
+May 20 14:30:00 ubuntu systemd[1]: Started uWSGI Service for My Django Project.
+May 20 14:30:00 ubuntu uwsgi[1234]: [uWSGI] getting INI configuration from uwsgi.ini
+```
+
+
+### 四、常用 systemd 命令（管理 uWSGI 服务）
+配置完成后，可通过以下命令管理 uWSGI 服务，无需手动执行 `uwsgi --ini` 或 `kill` 进程：
+
+| 命令                                  | 功能说明                                  |
+|---------------------------------------|-------------------------------------------|
+| `sudo systemctl start 服务名`         | 启动服务（服务名：uwsgi-myproject.service） |
+| `sudo systemctl stop 服务名`          | 停止服务                                  |
+| `sudo systemctl restart 服务名`       | 重启服务（修改 uwsgi.ini 后需执行）        |
+| `sudo systemctl status 服务名`        | 查看服务状态（是否运行、进程ID等）        |
+| `sudo systemctl enable 服务名`        | 开启开机自启                              |
+| `sudo systemctl disable 服务名`       | 关闭开机自启                              |
+| `sudo journalctl -u 服务名 -f`        | 实时查看服务日志（排查问题用）            |
+| `sudo journalctl -u 服务名 --since today` | 查看今日的服务日志                        |
+
+
+### 五、关键注意事项（避免踩坑）
+1. **权限问题**：
+   - `User` 和 `Group` 必须对 Django 项目目录、uWSGI 配置文件有 **读权限**，对项目的 `log` 目录（若有）有 **写权限**（否则 uWSGI 无法写日志，可能崩溃）；
+   - 禁止用 `root` 运行 uWSGI（安全风险），推荐用项目所属用户（如 `ubuntu`）或 Web 服务专用用户（如 `www-data`）。
+
+2. **uWSGI 配置需适配**：
+   - uWSGI 的 `daemonize` 选项（后台运行）**必须注释**（因为 systemd 会管理进程前台运行，若 uWSGI 后台运行，systemd 会误判进程退出，反复重启）；
+   - 示例 `uwsgi.ini` 中无需加 `daemonize = /path/to/log/uwsgi.log`，日志由 systemd 统一管理（通过 `journalctl` 查看）。
+
+3. **修改配置后需重启**：
+   - 若修改 `uwsgi.ini` 或 `systemd 服务文件`，需执行以下命令让配置生效：
+     ```bash
+     # 修改服务文件后需重新加载 systemd
+     sudo systemctl daemon-reload
+     # 重启 uWSGI 服务
+     sudo systemctl restart uwsgi-myproject.service
+     ```
+
+4. **验证开机自启**：
+   - 配置完成后，建议重启服务器测试（`sudo reboot`），重启后执行 `sudo systemctl status 服务名`，确认 uWSGI 已自动启动（`Active: active (running)`）。
+
+
+通过以上配置，uWSGI 会被 systemd 完全接管，实现“开机自动启动、进程崩溃自动重启、日志统一管理”，满足生产环境的高可用性需求。为 uWSGI 创建 **systemd 服务文件**，可实现开机自启、异常自动重启（进程崩溃/退出时触发）、状态管理（启动/停止/重启）等核心功能，完全适配生产环境需求。以下是详细步骤和配置说明：
+
+
+### 一、核心原理
+systemd 是 Linux 系统的初始化系统（如 Ubuntu 16.04+/CentOS 7+ 默认），通过“服务单元文件（`.service`）”管理进程。我们只需定义一个服务文件，指定 uWSGI 的启动命令、运行用户、重启策略等，即可让 systemd 接管 uWSGI 的生命周期。
+
+
+### 二、创建 systemd 服务文件
+#### 1. 确定关键路径（需提前准备）
+创建服务文件前，需明确 3 个核心路径（需根据你的项目实际情况替换）：
+| 路径类型               | 示例（需替换为你的实际路径）                          | 说明                                  |
+|------------------------|-------------------------------------------------------|---------------------------------------|
+| Django 项目根目录       | `/home/ubuntu/my_django_project`                       | 包含 `manage.py`、`uwsgi.ini` 的目录  |
+| uWSGI 配置文件路径     | `/home/ubuntu/my_django_project/uwsgi.ini`             | 之前创建的 uWSGI 配置文件（`uwsgi.ini`） |
+| Python 虚拟环境的 uWSGI 路径 | `/home/ubuntu/my_django_env/bin/uwsgi`              | 若使用虚拟环境，需指定虚拟环境内的 `uwsgi` 可执行文件；若全局安装，可直接用 `uwsgi`（通过 `which uwsgi` 查看路径） |
+
+
+#### 2. 创建服务文件
+systemd 服务文件默认存放在 `/etc/systemd/system/` 目录下，文件名建议为 `uwsgi-项目名.service`（便于区分多项目），例如 `uwsgi-myproject.service`。
+
+执行以下命令创建并编辑服务文件（需用 `sudo` 权限）：
+```bash
+sudo nano /etc/systemd/system/uwsgi-myproject.service
+```
+
+将以下内容粘贴到文件中，**并替换所有示例路径为你的实际路径**：
+```ini
+[Unit]
+# 服务描述（自定义，便于识别）
+Description=uWSGI Service for My Django Project
+# 依赖关系：在网络和文件系统就绪后启动（避免启动过早导致失败）
+After=network.target syslog.target
+
+[Service]
+# 运行用户（建议用非root用户，如 ubuntu、www-data，避免权限过高风险）
+User=ubuntu
+# 运行组（与用户一致，或用 www-data）
+Group=ubuntu
+# 工作目录（Django项目根目录，确保uWSGI能找到配置文件）
+WorkingDirectory=/home/ubuntu/my_django_project
+# 环境变量（可选，若项目依赖环境变量，如数据库密码、密钥等）
+# Environment="DJANGO_SETTINGS_MODULE=myproject.settings.prod"  # 示例：指定生产环境配置
+# Environment="SECRET_KEY=your_prod_secret_key"                # 示例：传递密钥（不推荐明文，建议用环境变量文件）
+
+# 启动命令（核心：指定uWSGI路径和配置文件）
+# 若用全局uWSGI，可简化为 ExecStart=/usr/bin/uwsgi --ini uwsgi.ini
+ExecStart=/home/ubuntu/my_django_env/bin/uwsgi --ini uwsgi.ini
+
+# 重启策略：异常退出时自动重启（核心需求）
+# always：无论退出码如何，均重启；on-failure：非0退出码时重启（推荐）
+Restart=on-failure
+# 重启延迟：异常退出后，延迟2秒再重启（避免频繁重启）
+RestartSec=2
+
+# 进程权限：禁止进程获得root权限（安全加固）
+NoNewPrivileges=true
+# 日志：将uWSGI的stdout/stderr重定向到systemd日志（便于排查问题）
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+# 开机自启的目标：多用户模式下生效（默认的正常系统运行模式）
+WantedBy=multi-user.target
+```
+
+
+#### 3. 保存并退出
+- 按 `Ctrl+O` 保存文件，按 `Enter` 确认文件名；
+- 按 `Ctrl+X` 退出 `nano` 编辑器。
+
+
+### 三、配置 systemd 服务（关键步骤）
+服务文件创建后，需通过 systemd 命令加载配置、启动服务，并设置开机自启。
+
+
+#### 1. 重新加载 systemd 配置
+由于新增了服务文件，需让 systemd 识别该文件：
+```bash
+sudo systemctl daemon-reload
+```
+
+
+#### 2. 启动 uWSGI 服务
+```bash
+sudo systemctl start uwsgi-myproject.service
+```
+
+- 若启动成功，无任何输出；
+- 若启动失败，执行 `sudo journalctl -u uwsgi-myproject -xe` 查看错误日志（核心排障命令）。
+
+
+#### 3. 设置开机自启
+确保服务器重启后，uWSGI 能自动启动：
+```bash
+sudo systemctl enable uwsgi-myproject.service
+```
+
+执行后会提示类似以下内容，说明开机自启已配置成功：
+```
+Created symlink /etc/systemd/system/multi-user.target.wants/uwsgi-myproject.service → /etc/systemd/system/uwsgi-myproject.service.
+```
+
+
+#### 4. 验证服务状态
+查看 uWSGI 服务是否正常运行、是否已设置开机自启：
+```bash
+sudo systemctl status uwsgi-myproject.service
+```
+
+**正常运行的输出示例**（关键信息已标注）：
+```
+● uwsgi-myproject.service - uWSGI Service for My Django Project
+     Loaded: loaded (/etc/systemd/system/uwsgi-myproject.service; enabled; vendor preset: enabled)  # enabled 表示开机自启已开启
+     Active: active (running) since Wed 2024-05-20 14:30:00 CST; 5min ago  # active (running) 表示服务正在运行
+       Docs: man:uwsgi(1)
+   Main PID: 1234 (uwsgi)  # 主进程ID
+      Tasks: 5 (limit: 4608)
+     Memory: 120.0M
+     CGroup: /system.slice/uwsgi-myproject.service
+             ├─1234 /home/ubuntu/my_django_env/bin/uwsgi --ini uwsgi.ini  # 主进程
+             ├─1235 /home/ubuntu/my_django_env/bin/uwsgi --ini uwsgi.ini  # 工作进程1
+             ├─1236 /home/ubuntu/my_django_env/bin/uwsgi --ini uwsgi.ini  # 工作进程2
+             ├─1237 /home/ubuntu/my_django_env/bin/uwsgi --ini uwsgi.ini  # 工作进程3
+             └─1238 /home/ubuntu/my_django_env/bin/uwsgi --ini uwsgi.ini  # 工作进程4
+
+May 20 14:30:00 ubuntu systemd[1]: Started uWSGI Service for My Django Project.
+May 20 14:30:00 ubuntu uwsgi[1234]: [uWSGI] getting INI configuration from uwsgi.ini
+```
+
+
+### 四、常用 systemd 命令（管理 uWSGI 服务）
+配置完成后，可通过以下命令管理 uWSGI 服务，无需手动执行 `uwsgi --ini` 或 `kill` 进程：
+
+| 命令                                  | 功能说明                                  |
+|---------------------------------------|-------------------------------------------|
+| `sudo systemctl start 服务名`         | 启动服务（服务名：uwsgi-myproject.service） |
+| `sudo systemctl stop 服务名`          | 停止服务                                  |
+| `sudo systemctl restart 服务名`       | 重启服务（修改 uwsgi.ini 后需执行）        |
+| `sudo systemctl status 服务名`        | 查看服务状态（是否运行、进程ID等）        |
+| `sudo systemctl enable 服务名`        | 开启开机自启                              |
+| `sudo systemctl disable 服务名`       | 关闭开机自启                              |
+| `sudo journalctl -u 服务名 -f`        | 实时查看服务日志（排查问题用）            |
+| `sudo journalctl -u 服务名 --since today` | 查看今日的服务日志                        |
+
+
+### 五、关键注意事项（避免踩坑）
+1. **权限问题**：
+   - `User` 和 `Group` 必须对 Django 项目目录、uWSGI 配置文件有 **读权限**，对项目的 `log` 目录（若有）有 **写权限**（否则 uWSGI 无法写日志，可能崩溃）；
+   - 禁止用 `root` 运行 uWSGI（安全风险），推荐用项目所属用户（如 `ubuntu`）或 Web 服务专用用户（如 `www-data`）。
+
+2. **uWSGI 配置需适配**：
+   - uWSGI 的 `daemonize` 选项（后台运行）**必须注释**（因为 systemd 会管理进程前台运行，若 uWSGI 后台运行，systemd 会误判进程退出，反复重启）；
+   - 示例 `uwsgi.ini` 中无需加 `daemonize = /path/to/log/uwsgi.log`，日志由 systemd 统一管理（通过 `journalctl` 查看）。
+
+3. **修改配置后需重启**：
+   - 若修改 `uwsgi.ini` 或 `systemd 服务文件`，需执行以下命令让配置生效：
+     ```bash
+     # 修改服务文件后需重新加载 systemd
+     sudo systemctl daemon-reload
+     # 重启 uWSGI 服务
+     sudo systemctl restart uwsgi-myproject.service
+     ```
+
+4. **验证开机自启**：
+   - 配置完成后，建议重启服务器测试（`sudo reboot`），重启后执行 `sudo systemctl status 服务名`，确认 uWSGI 已自动启动（`Active: active (running)`）。
+
+
+通过以上配置，uWSGI 会被 systemd 完全接管，实现“开机自动启动、进程崩溃自动重启、日志统一管理”，满足生产环境的高可用性需求。为 uWSGI 创建 **systemd 服务文件**，可实现开机自启、异常自动重启（进程崩溃/退出时触发）、状态管理（启动/停止/重启）等核心功能，完全适配生产环境需求。以下是详细步骤和配置说明：
+
+
+### 一、核心原理
+systemd 是 Linux 系统的初始化系统（如 Ubuntu 16.04+/CentOS 7+ 默认），通过“服务单元文件（`.service`）”管理进程。我们只需定义一个服务文件，指定 uWSGI 的启动命令、运行用户、重启策略等，即可让 systemd 接管 uWSGI 的生命周期。
+
+
+### 二、创建 systemd 服务文件
+#### 1. 确定关键路径（需提前准备）
+创建服务文件前，需明确 3 个核心路径（需根据你的项目实际情况替换）：
+| 路径类型               | 示例（需替换为你的实际路径）                          | 说明                                  |
+|------------------------|-------------------------------------------------------|---------------------------------------|
+| Django 项目根目录       | `/home/ubuntu/my_django_project`                       | 包含 `manage.py`、`uwsgi.ini` 的目录  |
+| uWSGI 配置文件路径     | `/home/ubuntu/my_django_project/uwsgi.ini`             | 之前创建的 uWSGI 配置文件（`uwsgi.ini`） |
+| Python 虚拟环境的 uWSGI 路径 | `/home/ubuntu/my_django_env/bin/uwsgi`              | 若使用虚拟环境，需指定虚拟环境内的 `uwsgi` 可执行文件；若全局安装，可直接用 `uwsgi`（通过 `which uwsgi` 查看路径） |
+
+
+#### 2. 创建服务文件
+systemd 服务文件默认存放在 `/etc/systemd/system/` 目录下，文件名建议为 `uwsgi-项目名.service`（便于区分多项目），例如 `uwsgi-myproject.service`。
+
+执行以下命令创建并编辑服务文件（需用 `sudo` 权限）：
+```bash
+sudo nano /etc/systemd/system/uwsgi-myproject.service
+```
+
+将以下内容粘贴到文件中，**并替换所有示例路径为你的实际路径**：
+```ini
+[Unit]
+# 服务描述（自定义，便于识别）
+Description=uWSGI Service for My Django Project
+# 依赖关系：在网络和文件系统就绪后启动（避免启动过早导致失败）
+After=network.target syslog.target
+
+[Service]
+# 运行用户（建议用非root用户，如 ubuntu、www-data，避免权限过高风险）
+User=ubuntu
+# 运行组（与用户一致，或用 www-data）
+Group=ubuntu
+# 工作目录（Django项目根目录，确保uWSGI能找到配置文件）
+WorkingDirectory=/home/ubuntu/my_django_project
+# 环境变量（可选，若项目依赖环境变量，如数据库密码、密钥等）
+# Environment="DJANGO_SETTINGS_MODULE=myproject.settings.prod"  # 示例：指定生产环境配置
+# Environment="SECRET_KEY=your_prod_secret_key"                # 示例：传递密钥（不推荐明文，建议用环境变量文件）
+
+# 启动命令（核心：指定uWSGI路径和配置文件）
+# 若用全局uWSGI，可简化为 ExecStart=/usr/bin/uwsgi --ini uwsgi.ini
+ExecStart=/home/ubuntu/my_django_env/bin/uwsgi --ini uwsgi.ini
+
+# 重启策略：异常退出时自动重启（核心需求）
+# always：无论退出码如何，均重启；on-failure：非0退出码时重启（推荐）
+Restart=on-failure
+# 重启延迟：异常退出后，延迟2秒再重启（避免频繁重启）
+RestartSec=2
+
+# 进程权限：禁止进程获得root权限（安全加固）
+NoNewPrivileges=true
+# 日志：将uWSGI的stdout/stderr重定向到systemd日志（便于排查问题）
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+# 开机自启的目标：多用户模式下生效（默认的正常系统运行模式）
+WantedBy=multi-user.target
+```
+
+
+#### 3. 保存并退出
+- 按 `Ctrl+O` 保存文件，按 `Enter` 确认文件名；
+- 按 `Ctrl+X` 退出 `nano` 编辑器。
+
+
+### 三、配置 systemd 服务（关键步骤）
+服务文件创建后，需通过 systemd 命令加载配置、启动服务，并设置开机自启。
+
+
+#### 1. 重新加载 systemd 配置
+由于新增了服务文件，需让 systemd 识别该文件：
+```bash
+sudo systemctl daemon-reload
+```
+
+
+#### 2. 启动 uWSGI 服务
+```bash
+sudo systemctl start uwsgi-myproject.service
+```
+
+- 若启动成功，无任何输出；
+- 若启动失败，执行 `sudo journalctl -u uwsgi-myproject -xe` 查看错误日志（核心排障命令）。
+
+
+#### 3. 设置开机自启
+确保服务器重启后，uWSGI 能自动启动：
+```bash
+sudo systemctl enable uwsgi-myproject.service
+```
+
+执行后会提示类似以下内容，说明开机自启已配置成功：
+```
+Created symlink /etc/systemd/system/multi-user.target.wants/uwsgi-myproject.service → /etc/systemd/system/uwsgi-myproject.service.
+```
+
+
+#### 4. 验证服务状态
+查看 uWSGI 服务是否正常运行、是否已设置开机自启：
+```bash
+sudo systemctl status uwsgi-myproject.service
+```
+
+**正常运行的输出示例**（关键信息已标注）：
+```
+● uwsgi-myproject.service - uWSGI Service for My Django Project
+     Loaded: loaded (/etc/systemd/system/uwsgi-myproject.service; enabled; vendor preset: enabled)  # enabled 表示开机自启已开启
+     Active: active (running) since Wed 2024-05-20 14:30:00 CST; 5min ago  # active (running) 表示服务正在运行
+       Docs: man:uwsgi(1)
+   Main PID: 1234 (uwsgi)  # 主进程ID
+      Tasks: 5 (limit: 4608)
+     Memory: 120.0M
+     CGroup: /system.slice/uwsgi-myproject.service
+             ├─1234 /home/ubuntu/my_django_env/bin/uwsgi --ini uwsgi.ini  # 主进程
+             ├─1235 /home/ubuntu/my_django_env/bin/uwsgi --ini uwsgi.ini  # 工作进程1
+             ├─1236 /home/ubuntu/my_django_env/bin/uwsgi --ini uwsgi.ini  # 工作进程2
+             ├─1237 /home/ubuntu/my_django_env/bin/uwsgi --ini uwsgi.ini  # 工作进程3
+             └─1238 /home/ubuntu/my_django_env/bin/uwsgi --ini uwsgi.ini  # 工作进程4
+
+May 20 14:30:00 ubuntu systemd[1]: Started uWSGI Service for My Django Project.
+May 20 14:30:00 ubuntu uwsgi[1234]: [uWSGI] getting INI configuration from uwsgi.ini
+```
+
+
+### 四、常用 systemd 命令（管理 uWSGI 服务）
+配置完成后，可通过以下命令管理 uWSGI 服务，无需手动执行 `uwsgi --ini` 或 `kill` 进程：
+
+| 命令                                  | 功能说明                                  |
+|---------------------------------------|-------------------------------------------|
+| `sudo systemctl start 服务名`         | 启动服务（服务名：uwsgi-myproject.service） |
+| `sudo systemctl stop 服务名`          | 停止服务                                  |
+| `sudo systemctl restart 服务名`       | 重启服务（修改 uwsgi.ini 后需执行）        |
+| `sudo systemctl status 服务名`        | 查看服务状态（是否运行、进程ID等）        |
+| `sudo systemctl enable 服务名`        | 开启开机自启                              |
+| `sudo systemctl disable 服务名`       | 关闭开机自启                              |
+| `sudo journalctl -u 服务名 -f`        | 实时查看服务日志（排查问题用）            |
+| `sudo journalctl -u 服务名 --since today` | 查看今日的服务日志                        |
+
+
+### 五、关键注意事项（避免踩坑）
+1. **权限问题**：
+   - `User` 和 `Group` 必须对 Django 项目目录、uWSGI 配置文件有 **读权限**，对项目的 `log` 目录（若有）有 **写权限**（否则 uWSGI 无法写日志，可能崩溃）；
+   - 禁止用 `root` 运行 uWSGI（安全风险），推荐用项目所属用户（如 `ubuntu`）或 Web 服务专用用户（如 `www-data`）。
+
+2. **uWSGI 配置需适配**：
+   - uWSGI 的 `daemonize` 选项（后台运行）**必须注释**（因为 systemd 会管理进程前台运行，若 uWSGI 后台运行，systemd 会误判进程退出，反复重启）；
+   - 示例 `uwsgi.ini` 中无需加 `daemonize = /path/to/log/uwsgi.log`，日志由 systemd 统一管理（通过 `journalctl` 查看）。
+
+3. **修改配置后需重启**：
+   - 若修改 `uwsgi.ini` 或 `systemd 服务文件`，需执行以下命令让配置生效：
+     ```bash
+     # 修改服务文件后需重新加载 systemd
+     sudo systemctl daemon-reload
+     # 重启 uWSGI 服务
+     sudo systemctl restart uwsgi-myproject.service
+     ```
+
+4. **验证开机自启**：
+   - 配置完成后，建议重启服务器测试（`sudo reboot`），重启后执行 `sudo systemctl status 服务名`，确认 uWSGI 已自动启动（`Active: active (running)`）。
+
+
+通过以上配置，uWSGI 会被 systemd 完全接管，实现“开机自动启动、进程崩溃自动重启、日志统一管理”，满足生产环境的高可用性需求。
