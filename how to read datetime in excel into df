@@ -1,0 +1,39 @@
+在 Pandas 中处理 Excel 日期时间数据时，需要注意 Excel 存储日期的特殊方式（本质上是浮点数），以及如何正确解析为 Pandas 的 datetime 类型。以下是几种常用方法：
+
+1. **读取时直接解析**
+   使用 `pd.read_excel()` 时，通过 `parse_dates` 参数指定需要解析为日期时间的列：
+
+```python
+import pandas as pd
+
+# 方法1：指定列索引或列名
+df = pd.read_excel('data.xlsx', parse_dates=[0, 2])  # 解析第0列和第2列
+# 或
+df = pd.read_excel('data.xlsx', parse_dates=['出生日期', '注册时间'])
+
+# 方法2：自动检测所有日期列（可能不准确）
+df = pd.read_excel('data.xlsx', parse_dates=True)
+```
+
+2. **读取后转换**
+   如果读取时未正确解析，可以使用 `pd.to_datetime()` 手动转换：
+
+```python
+# 转换单个列
+df['日期列'] = pd.to_datetime(df['日期列'])
+
+# 处理可能的格式问题
+df['日期列'] = pd.to_datetime(df['日期列'], format='%Y-%m-%d %H:%M:%S', errors='coerce')
+# errors='coerce' 会将无法解析的值转为 NaT
+```
+
+3. **处理 Excel 原始数值**
+   如果日期被读取为浮点数（Excel 原始存储格式），可以结合 `pd.to_datetime()` 转换：
+
+```python
+# 将Excel数值转换为日期时间
+df['日期列'] = pd.to_datetime(df['日期列'], unit='D', origin='1899-12-30')
+# 注意：Excel的基准日期是1900-01-00（实际对应1899-12-30）
+```
+
+转换后可以使用 `df.dtypes` 检查列类型，确认是否为 `datetime64[ns]` 类型，这表明转换成功。
